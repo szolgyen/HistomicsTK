@@ -116,68 +116,78 @@ def compute_intensity_features(
     if rprops is None:
         rprops = regionprops(im_label)
 
-    # create pandas data frame containing the features for each object
-    numFeatures = len(feature_list)
+    # collect features for each object in a list
     numLabels = len(rprops)
-    fdata = pd.DataFrame(np.zeros((numLabels, numFeatures)),
-                         columns=feature_list)
-
-    # conditionally execute calculations if x in the features list
-    def _conditional_execution(feature, func, *args, **kwargs):
-        if feature in feature_list:
-            with warnings.catch_warnings():
-                warnings.simplefilter('ignore', RuntimeWarning)
-                fdata.at[i, feature] = func(*args, **kwargs)
-
-    def _return_input(x):
-        return x
+    results = []
 
     for i in range(numLabels):
+        region = rprops[i]
         if rprops[i] is None:
             continue
 
-        # get intensities of object pixels
-        pixelIntensities = np.sort(
-            im_intensity[rprops[i].coords[:, 0], rprops[i].coords[:, 1]],
-        )
+        row = {}
 
-        # simple descriptors
+        # Get pixel intensities for the current region
+        pixelIntensities = im_intensity[region.coords[:, 0], region.coords[:, 1]]
+
+        if pixelIntensities.size == 0:
+            # If no pixels, skip or fill NaNs
+            results.append({feat: np.nan for feat in feature_list})
+            continue
+
         meanIntensity = np.mean(pixelIntensities)
         medianIntensity = np.median(pixelIntensities)
-        _conditional_execution('Intensity.Min', np.min, pixelIntensities)
-        _conditional_execution('Intensity.Max', np.max, pixelIntensities)
-        _conditional_execution('Intensity.Mean', _return_input, meanIntensity)
-        _conditional_execution(
-            'Intensity.Median', _return_input, medianIntensity)
-        _conditional_execution(
-            'Intensity.MeanMedianDiff', _return_input,
-            meanIntensity - medianIntensity)
-        _conditional_execution('Intensity.Std', np.std, pixelIntensities)
-        _conditional_execution(
-            'Intensity.Skewness', scipy.stats.skew, pixelIntensities)
-        _conditional_execution(
-            'Intensity.Kurtosis', scipy.stats.kurtosis, pixelIntensities)
 
-        # inter-quartile range
-        _conditional_execution(
-            'Intensity.IQR', scipy.stats.iqr, pixelIntensities)
+        # Populate features conditionally
+        if 'Intensity.Min' in feature_list:
+            row['Intensity.Min'] = np.min(pixelIntensities)
+        if 'Intensity.Max' in feature_list:
+            row['Intensity.Max'] = np.max(pixelIntensities)
+        if 'Intensity.Mean' in feature_list:
+            row['Intensity.Mean'] = meanIntensity
+        if 'Intensity.Median' in feature_list:
+            row['Intensity.Median'] = medianIntensity
+        if 'Intensity.MeanMedianDiff' in feature_list:
+            row['Intensity.MeanMedianDiff'] = meanIntensity - medianIntensity
+        if 'Intensity.Std' in feature_list:
+            row['Intensity.Std'] = np.std(pixelIntensities)
+        if 'Intensity.IQR' in feature_list:
+            row['Intensity.IQR'] = scipy.stats.iqr(pixelIntensities)
+        if 'Intensity.MAD' in feature_list:
+            row['Intensity.MAD'] = np.median(np.abs(pixelIntensities - medianIntensity))
+        if 'Intensity.Skewness' in feature_list:
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore', RuntimeWarning)
+                row['Intensity.Skewness'] = scipy.stats.skew(pixelIntensities)
+        if 'Intensity.Kurtosis' in feature_list:
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore', RuntimeWarning)
+                row['Intensity.Kurtosis'] = scipy.stats.kurtosis(pixelIntensities)
 
-        # median absolute deviation
-        _conditional_execution(
-            'Intensity.MAD', np.median,
-            np.abs(pixelIntensities - medianIntensity))
-
-        # histogram-based features
-        if any(j in feature_list for j in [
-                'Intensity.HistEntropy', 'Intensity.HistEnergy']):
-
-            # compute intensity histogram
-            hist, bins = np.histogram(pixelIntensities, bins=num_hist_bins)
+        # Histogram-based features (energy and entropy)
+        if any(j in feature_list for j in ['Intensity.HistEntropy', 'Intensity.HistEnergy']):
+            hist, _ = np.histogram(pixelIntensities, bins=num_hist_bins)
             prob = hist / np.sum(hist, dtype=np.float32)
 
-            # entropy and energy
-            _conditional_execution(
-                'Intensity.HistEntropy', scipy.stats.entropy, prob)
-            _conditional_execution('Intensity.HistEnergy', np.sum, prob**2)
+            if 'Intensity.HistEntropy' in feature_list:
+                with warnings.catch_warnings():
+                    warnings.simplefilter('ignore', RuntimeWarning)
+                    row['Intensity.HistEntropy'] = scipy.stats.entropy(prob)
+            if 'Intensity.HistEnergy' in feature_list:
+                row['Intensity.HistEnergy'] = np.sum(prob ** 2)
+
+        # Add the row to the results list
+        results.append(row)
+
+    # After the loop, create the DataFrame
+    fdata = pd.DataFrame(results)
+
+    # Ensure all requested features are in the DataFrame (fill missing with NaNs)
+    for feat in feature_list:
+        if feat not in fdata.columns:
+            fdata[feat] = np.nan
+
+    # Reorder columns to match feature_list
+    fdata = fdata[feature_list]
 
     return fdata
