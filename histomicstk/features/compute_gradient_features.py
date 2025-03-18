@@ -62,7 +62,6 @@ def compute_gradient_features(im_label, im_intensity,
 
     """
     import pandas as pd
-    import scipy.stats
     from skimage.feature import canny
     from skimage.measure import regionprops
 
@@ -106,13 +105,16 @@ def compute_gradient_features(im_label, im_intensity,
         bw_canny = cannyG[rprops[i].coords[:, 0], rprops[i].coords[:, 1]]
         canny_sum = np.sum(bw_canny).astype('float')
 
+        meanGradients = np.mean(pixelGradients)
+        stdGradients = np.std(pixelGradients)
+
         # Aggregate features
         features = [
-            np.mean(pixelGradients),  # Mean
-            np.std(pixelGradients),  # Std
-            scipy.stats.skew(pixelGradients),  # Skewness
-            scipy.stats.kurtosis(pixelGradients),  # Kurtosis
-            scipy.stats.entropy(prob),  # HistEntropy
+            meanGradients,  # Mean
+            stdGradients,  # Std
+            _fast_skew(pixelGradients, meanGradients, stdGradients),  # Skewness
+            _fast_kurtosis(pixelGradients, meanGradients, stdGradients),  # Kurtosis
+            _fast_entropy(prob),  # HistEntropy
             np.sum(prob**2),  # HistEnergy
             canny_sum,  # Canny.Sum
             canny_sum / len(pixelGradients),  # Canny.Mean
@@ -135,3 +137,19 @@ def compute_gradient_features(im_label, im_intensity,
     fdata = pd.DataFrame(data, columns=feature_list)
 
     return fdata
+
+def _fast_skew(x, _mean, _std):
+    n = len(x)
+    if _std == 0: return 0.0
+    return np.sum((x - _mean)**3) / n / _std**3
+
+def _fast_kurtosis(x, _mean, _std):
+    n = len(x)
+    if _std == 0: return -3.0
+    return np.sum((x - _mean)**4) / n / _std**4 - 3
+
+def _fast_entropy(prob):
+    prob = np.asarray(prob)
+    prob = prob[prob > 0]
+    log_p = np.log(prob)
+    return -np.sum(prob * log_p)
