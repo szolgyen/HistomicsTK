@@ -87,7 +87,6 @@ def compute_intensity_features(
 
     """
     import pandas as pd
-    import scipy.stats
     from skimage.measure import regionprops
 
     default_feature_list = [
@@ -137,6 +136,7 @@ def compute_intensity_features(
 
         meanIntensity = np.mean(pixelIntensities)
         medianIntensity = np.median(pixelIntensities)
+        stdIntensity = np.std(pixelIntensities)
 
         # Populate features conditionally
         if 'Intensity.Min' in feature_list:
@@ -150,19 +150,19 @@ def compute_intensity_features(
         if 'Intensity.MeanMedianDiff' in feature_list:
             row['Intensity.MeanMedianDiff'] = meanIntensity - medianIntensity
         if 'Intensity.Std' in feature_list:
-            row['Intensity.Std'] = np.std(pixelIntensities)
+            row['Intensity.Std'] = stdIntensity
         if 'Intensity.IQR' in feature_list:
-            row['Intensity.IQR'] = scipy.stats.iqr(pixelIntensities)
+            row['Intensity.IQR'] = _fast_iqr(pixelIntensities) 
         if 'Intensity.MAD' in feature_list:
             row['Intensity.MAD'] = np.median(np.abs(pixelIntensities - medianIntensity))
         if 'Intensity.Skewness' in feature_list:
             with warnings.catch_warnings():
                 warnings.simplefilter('ignore', RuntimeWarning)
-                row['Intensity.Skewness'] = scipy.stats.skew(pixelIntensities)
+                row['Intensity.Skewness'] = _fast_skew(pixelIntensities, meanIntensity, stdIntensity)
         if 'Intensity.Kurtosis' in feature_list:
             with warnings.catch_warnings():
                 warnings.simplefilter('ignore', RuntimeWarning)
-                row['Intensity.Kurtosis'] = scipy.stats.kurtosis(pixelIntensities)
+                row['Intensity.Kurtosis'] = _fast_kurtosis(pixelIntensities, meanIntensity, stdIntensity)
 
         # Histogram-based features (energy and entropy)
         if any(j in feature_list for j in ['Intensity.HistEntropy', 'Intensity.HistEnergy']):
@@ -172,7 +172,7 @@ def compute_intensity_features(
             if 'Intensity.HistEntropy' in feature_list:
                 with warnings.catch_warnings():
                     warnings.simplefilter('ignore', RuntimeWarning)
-                    row['Intensity.HistEntropy'] = scipy.stats.entropy(prob)
+                    row['Intensity.HistEntropy'] = _fast_entropy(prob) 
             if 'Intensity.HistEnergy' in feature_list:
                 row['Intensity.HistEnergy'] = np.sum(prob ** 2)
 
@@ -191,3 +191,23 @@ def compute_intensity_features(
     fdata = fdata[feature_list]
 
     return fdata
+
+def _fast_iqr(x):
+    q75, q25 = np.percentile(x, [75, 25])
+    return q75 - q25
+
+def _fast_skew(x, _mean, _std):
+    n = len(x)
+    if _std == 0: return 0.0
+    return np.sum((x - _mean)**3) / n / _std**3
+
+def _fast_kurtosis(x, _mean, _std):
+    n = len(x)
+    if _std == 0: return -3.0
+    return np.sum((x - _mean)**4) / n / _std**4 - 3
+
+def _fast_entropy(prob):
+    prob = np.asarray(prob)
+    prob = prob[prob > 0]
+    log_p = np.log(prob)
+    return -np.sum(prob * log_p)
